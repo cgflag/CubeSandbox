@@ -16,20 +16,19 @@ import (
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/scheduler/selctx"
 )
 
-func TestBinpackScoreMissingPluginConfigUsesDefaults(t *testing.T) {
+func TestBinpackBuiltinProfileInjectsDefaults(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	initBinpackScoreTestConfig(t, `common: {}
 log: {}
 scheduler:
-  score:
-    enable_scorers:
-      - binpack_score
-    resource_weights:
-      binpack_score: 1
+  profile: binpack_utilization
 `)
 
 	scorer := NewBinpackScore()
 	if scorer.Disable() {
-		t.Fatal("missing plugin_conf.binpack_score should keep binpack_score enabled")
+		t.Fatal("built-in binpack profile should inject an enabled config")
 	}
 	if scorer.Weight() != 1 {
 		t.Fatalf("Weight() = %v, want 1", scorer.Weight())
@@ -40,6 +39,9 @@ scheduler:
 }
 
 func TestBinpackScoreDisableSkipsSelect(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	initBinpackScoreTestConfig(t, `common: {}
 log: {}
 scheduler:
@@ -64,7 +66,41 @@ scheduler:
 	}
 }
 
+func TestBinpackScoreZeroWeightDisablesAndSkipsSelect(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
+	initBinpackScoreTestConfig(t, `common: {}
+log: {}
+scheduler:
+  score:
+    enable_scorers:
+      - binpack_score
+    plugin_conf:
+      binpack_score:
+        weight: 0
+`)
+
+	scorer := NewBinpackScore()
+	if !scorer.Disable() {
+		t.Fatal("Disable() = false, want true for weight: 0")
+	}
+	if scorer.Weight() != 0 {
+		t.Fatalf("Weight() = %v, want 0", scorer.Weight())
+	}
+	got, err := scorer.Select(binpackScoreTestCtx(t))
+	if err != nil {
+		t.Fatalf("Select() error = %v, want nil", err)
+	}
+	if got != nil {
+		t.Fatalf("Select() = %+v, want nil", got)
+	}
+}
+
 func TestBinpackScorePrefersFullerNode(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	initBinpackScoreTestConfig(t, `common: {}
 log: {}
 scheduler:
@@ -98,15 +134,43 @@ scheduler:
 	}
 }
 
-func TestBinpackScoreRegisteredByConfig(t *testing.T) {
+func TestBinpackScoreNegativeWeightUsesLegacyDefault(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	initBinpackScoreTestConfig(t, `common: {}
 log: {}
 scheduler:
   score:
     enable_scorers:
       - binpack_score
-    resource_weights:
-      binpack_score: 1
+    plugin_conf:
+      binpack_score:
+        weight: -2
+`)
+
+	scorer := NewBinpackScore()
+	if scorer.Disable() {
+		t.Fatal("negative legacy weight should use the enabled compatibility default")
+	}
+	if scorer.Weight() != 1 {
+		t.Fatalf("Weight() = %v, want compatibility default 1", scorer.Weight())
+	}
+}
+
+func TestBinpackScoreRegisteredByConfig(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
+	initBinpackScoreTestConfig(t, `common: {}
+log: {}
+scheduler:
+  score:
+    enable_scorers:
+      - binpack_score
+    plugin_conf:
+      binpack_score:
+        weight: 1
 `)
 
 	selectors := NewSelector(context.Background())

@@ -276,6 +276,9 @@ func TestPreHandleScheduler_NoProfileLeavesSchedulerUnchanged(t *testing.T) {
 			Score: &SchedulerScoreConf{
 				EnableScorers:   []string{"affinity_score"},
 				ResourceWeights: map[string]float64{"cpu": 1.0},
+				ScorePluginConf: ScorePluginConf{
+					AffinityScore: &AffinityScore{Weight: 1},
+				},
 			},
 			Profiles: map[string]SchedulerProfileConf{
 				"unused": {
@@ -299,7 +302,14 @@ func TestPreHandleScheduler_ProfileAppliesFilterAndScore(t *testing.T) {
 			Filter:  &SchedulerFilterConf{EnableFilters: []string{"cpu"}},
 			Score: &SchedulerScoreConf{
 				EnableScorers:   []string{"affinity_score"},
-				ResourceWeights: map[string]float64{"cpu": 1.0},
+				ResourceWeights: map[string]float64{"cpu": 1.0, "disk": 7.0},
+				ScorePluginConf: ScorePluginConf{
+					RealTimeWeightedAverage: &RealTimeWeightedAverage{Weight: 1},
+					MultiFactorWeightedAverage: &MultiFactorWeightedAverage{
+						Weight:        1,
+						ScoreInterval: time.Second,
+					},
+				},
 			},
 			Profiles: map[string]SchedulerProfileConf{
 				"spread_like": {
@@ -319,7 +329,52 @@ func TestPreHandleScheduler_ProfileAppliesFilterAndScore(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"cpu", "mem", "realtime_create_num"}, cfg.Scheduler.Filter.EnableFilters)
 	assert.Equal(t, []string{"real_time_weighted_average", "multi_factor_weighted_average"}, cfg.Scheduler.Score.EnableScorers)
-	assert.Equal(t, map[string]float64{"cpu": 0.4, "mem": 0.6}, cfg.Scheduler.Score.ResourceWeights)
+	assert.Equal(t, map[string]float64{"cpu": 0.4, "mem": 0.6, "disk": 7.0}, cfg.Scheduler.Score.ResourceWeights)
+}
+
+func TestPreHandleScheduler_ProfileWeightsMergeWithNilBase(t *testing.T) {
+	cfg := &Config{Scheduler: &WrapperSchedulerConf{
+		SchedulerConf: SchedulerConf{
+			Profile: "weights_only",
+			Profiles: map[string]SchedulerProfileConf{
+				"weights_only": {
+					Score: &SchedulerProfileScoreConf{
+						ResourceWeights: map[string]float64{"cpu": 0.4},
+					},
+				},
+			},
+		},
+	}}
+
+	err := preHandleScheduler(cfg)
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]float64{"cpu": 0.4}, cfg.Scheduler.Score.ResourceWeights)
+}
+
+func TestPreHandleScheduler_ProfileWithoutWeightsLeavesBaseWeights(t *testing.T) {
+	baseWeights := map[string]float64{"cpu": 1, "mem": 2}
+	cfg := &Config{Scheduler: &WrapperSchedulerConf{
+		SchedulerConf: SchedulerConf{
+			Profile: "scorers_only",
+			Score: &SchedulerScoreConf{
+				ResourceWeights: baseWeights,
+				ScorePluginConf: ScorePluginConf{
+					ExternalHTTPScore: &ExternalHTTPScore{},
+				},
+			},
+			Profiles: map[string]SchedulerProfileConf{
+				"scorers_only": {
+					Score: &SchedulerProfileScoreConf{
+						EnableScorers: []string{"external_http_score"},
+					},
+				},
+			},
+		},
+	}}
+
+	err := preHandleScheduler(cfg)
+	assert.NoError(t, err)
+	assert.Equal(t, baseWeights, cfg.Scheduler.Score.ResourceWeights)
 }
 
 func TestPreHandleScheduler_UnknownProfileReturnsError(t *testing.T) {
@@ -384,6 +439,9 @@ func TestPreHandleScheduler_ProfileFilterOnlyDoesNotClearScore(t *testing.T) {
 			Score: &SchedulerScoreConf{
 				EnableScorers:   []string{"image_score"},
 				ResourceWeights: map[string]float64{"mem": 2.0},
+				ScorePluginConf: ScorePluginConf{
+					ImageScore: &ImageScore{Weight: 1},
+				},
 			},
 			Profiles: map[string]SchedulerProfileConf{
 				"filter_only": {
@@ -408,6 +466,9 @@ func TestPreHandleScheduler_ProfileScoreOnlyDoesNotClearFilter(t *testing.T) {
 			Score: &SchedulerScoreConf{
 				EnableScorers:   []string{"affinity_score"},
 				ResourceWeights: map[string]float64{"cpu": 1.0},
+				ScorePluginConf: ScorePluginConf{
+					ExternalHTTPScore: &ExternalHTTPScore{},
+				},
 			},
 			Profiles: map[string]SchedulerProfileConf{
 				"score_only": {
@@ -489,12 +550,10 @@ scheduler:
           - template_locality
       score:
         enable_scorers:
-          - image_score
           - external_http_score
-        resource_weights:
-          image_score: 1
-          external_http_score: 2
   score:
+    resource_weights:
+      cpu: 1
     plugin_conf:
       external_http_score:
         weight: 1
@@ -509,9 +568,8 @@ scheduler:
 	assert.NotNil(t, got.Scheduler)
 	assert.Equal(t, "http_score_combo", got.Scheduler.Profile)
 	assert.Equal(t, []string{"cpu", "mem", "template_locality"}, got.Scheduler.Filter.EnableFilters)
-	assert.Equal(t, []string{"image_score", "external_http_score"}, got.Scheduler.Score.EnableScorers)
-	assert.Equal(t, 2.0, got.Scheduler.Score.ResourceWeights["external_http_score"])
-	assert.Equal(t, 1.0, got.Scheduler.Score.ResourceWeights["image_score"])
+	assert.Equal(t, []string{"external_http_score"}, got.Scheduler.Score.EnableScorers)
+	assert.Equal(t, map[string]float64{"cpu": 1}, got.Scheduler.Score.ResourceWeights)
 
 	plugin := got.Scheduler.Score.ScorePluginConf.ExternalHTTPScore
 	if assert.NotNil(t, plugin) {
@@ -540,6 +598,8 @@ scheduler:
     resource_weights:
       cpu: 1
     plugin_conf:
+      affinity_score:
+        weight: 1
       external_http_score:
         endpoint: "http://127.0.0.1:18080/score"
         timeout: 200ms
@@ -593,8 +653,8 @@ func TestPreHandleScheduler_BuiltinProfilesApplyWithoutUserMap(t *testing.T) {
 			name:            "binpack_utilization",
 			wantFilters:     []string{"cpu", "mem"},
 			wantScorers:     []string{"binpack_score"},
-			wantWeightKey:   "binpack_score",
-			wantWeightValue: 1,
+			wantWeightKey:   "",
+			wantWeightValue: 0,
 		},
 	}
 	for _, tc := range cases {
@@ -610,7 +670,25 @@ scheduler:
 			assert.Equal(t, tc.name, got.Scheduler.Profile)
 			assert.Equal(t, tc.wantFilters, got.Scheduler.Filter.EnableFilters)
 			assert.Equal(t, tc.wantScorers, got.Scheduler.Score.EnableScorers)
-			assert.Equal(t, tc.wantWeightValue, got.Scheduler.Score.ResourceWeights[tc.wantWeightKey])
+			if tc.wantWeightKey == "" {
+				assert.NotContains(t, got.Scheduler.Score.ResourceWeights, "binpack_score")
+			} else {
+				assert.Equal(t, tc.wantWeightValue, got.Scheduler.Score.ResourceWeights[tc.wantWeightKey])
+			}
+			switch tc.name {
+			case RuntimeProfileBalancedSpread:
+				assert.NotNil(t, got.Scheduler.Score.ScorePluginConf.RealTimeWeightedAverage)
+			case RuntimeProfileTemplateLocalityFirst:
+				assert.NotNil(t, got.Scheduler.Score.ScorePluginConf.ImageScore)
+			case RuntimeProfileBinpackUtilization:
+				binpack := got.Scheduler.Score.ScorePluginConf.BinpackScore
+				if assert.NotNil(t, binpack) {
+					assert.Equal(t, 1.0, binpack.Weight)
+					assert.Equal(t, 1.0, binpack.CPUWeight)
+					assert.Equal(t, 1.0, binpack.MemWeight)
+					assert.Equal(t, 1.0, binpack.MvmWeight)
+				}
+			}
 		})
 	}
 }
@@ -637,6 +715,12 @@ func TestPreHandleScheduler_UserProfileOverridesBuiltin(t *testing.T) {
 log: {}
 scheduler:
   profile: balanced_spread
+  score:
+    resource_weights:
+      mem: 3
+    plugin_conf:
+      affinity_score:
+        weight: 1
   profiles:
     balanced_spread:
       filter:
@@ -652,7 +736,67 @@ scheduler:
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"disk"}, got.Scheduler.Filter.EnableFilters)
 	assert.Equal(t, []string{"affinity_score"}, got.Scheduler.Score.EnableScorers)
-	assert.Equal(t, map[string]float64{"cpu": 9}, got.Scheduler.Score.ResourceWeights)
+	assert.Equal(t, map[string]float64{"cpu": 9, "mem": 3}, got.Scheduler.Score.ResourceWeights)
+	assert.Nil(t, got.Scheduler.Score.ScorePluginConf.RealTimeWeightedAverage)
+}
+
+func TestInit_UserProfileRequiredPluginConfigFailsFast(t *testing.T) {
+	for _, scorer := range []string{
+		"real_time_weighted_average",
+		"multi_factor_weighted_average",
+		"affinity_score",
+		"image_score",
+		"external_http_score",
+		"binpack_score",
+	} {
+		t.Run(scorer, func(t *testing.T) {
+			yamlBody := fmt.Sprintf(`common: {}
+log: {}
+scheduler:
+  profile: missing_plugin
+  profiles:
+    missing_plugin:
+      score:
+        enable_scorers:
+          - %s
+`, scorer)
+			_, err := initConfigFromYAML(t, yamlBody)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "plugin_conf."+scorer)
+		})
+	}
+}
+
+func TestInit_DirectEnabledScorerMissingPluginConfigFailsFast(t *testing.T) {
+	yamlBody := `common: {}
+log: {}
+scheduler:
+  score:
+    enable_scorers:
+      - external_http_score
+`
+	_, err := initConfigFromYAML(t, yamlBody)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "plugin_conf.external_http_score")
+}
+
+func TestInit_ProfileInheritedEnabledScorerMissingPluginConfigFailsFast(t *testing.T) {
+	yamlBody := `common: {}
+log: {}
+scheduler:
+  profile: filters_only
+  score:
+    enable_scorers:
+      - image_score
+  profiles:
+    filters_only:
+      filter:
+        enable_filters:
+          - cpu
+`
+	_, err := initConfigFromYAML(t, yamlBody)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "plugin_conf.image_score")
 }
 
 func TestInit_EmptySchedulerProfileDoesNotApplyBuiltin(t *testing.T) {
@@ -668,6 +812,9 @@ scheduler:
       - affinity_score
     resource_weights:
       cpu: 1
+    plugin_conf:
+      affinity_score:
+        weight: 1
 `
 	got, err := initConfigFromYAML(t, yamlBody)
 	assert.NoError(t, err)

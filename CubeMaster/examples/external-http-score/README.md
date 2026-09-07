@@ -189,8 +189,6 @@ scheduler:
   score:
     enable_scorers:
       - external_http_score
-    resource_weights:
-      external_http_score: 1
     plugin_conf:
       external_http_score:
         weight: 1
@@ -207,8 +205,6 @@ scheduler:
   score:
     enable_scorers:
       - external_http_score
-    resource_weights:
-      external_http_score: 1
     plugin_conf:
       external_http_score:
         weight: 1
@@ -218,7 +214,14 @@ scheduler:
         disable: false
 ```
 
-A user-defined runtime profile may list `external_http_score` in `enable_scorers` / `resource_weights`, but the endpoint and `mode` still stay on `scheduler.score.plugin_conf.external_http_score`. Protocol details: `docs/dev/external-http-score.md`. Runtime profile YAML: `docs/dev/scheduler-profile-config-example.md`.
+A user-defined runtime profile may list `external_http_score` in
+`enable_scorers`, but its plugin weight, endpoint, and `mode` stay on
+`scheduler.score.plugin_conf.external_http_score`. A scorer name under
+`resource_weights` is only an unused factor key; it does not enable or weight
+the plugin. The block is required whenever the scorer is enabled, and
+`weight: 0` disables it without sending a request. Protocol details:
+`docs/dev/external-http-score.md`. Runtime profile YAML:
+`docs/dev/scheduler-profile-config-example.md`.
 
 This config wiring is how CubeMaster would consume the demo. Running `go run ./examples/external-http-score` plus `curl` only proves the sidecar. It does not start CubeMaster, CubeAPI, or Cubelet.
 

@@ -36,8 +36,27 @@ func TestRunCLIVerifySucceeds(t *testing.T) {
 	if !fileExists(t, filepath.Join(outDir, "report.md")) {
 		t.Fatal("runCLI(--verify) did not write report.md")
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte("scheduler benchmark verification passed")) {
+	if !bytes.Contains(stdout.Bytes(), []byte(verifyScope+" verification passed")) {
 		t.Fatalf("runCLI(--verify) stdout = %q, want verification success", stdout.String())
+	}
+}
+
+func TestRunCLIVerifyHelpDescribesDefaultSelectionScope(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := runCLI([]string{"--help"}, &stdout, &stderr); err != nil {
+		t.Fatalf("runCLI(--help) error = %v", err)
+	}
+	help := stderr.String()
+	for _, want := range []string{
+		verifyScope,
+		"not arbitrary --profiles/--workloads subsets",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("runCLI(--help) stderr = %q, want it to contain %q", help, want)
+		}
 	}
 }
 
@@ -201,6 +220,14 @@ func TestRunCLIVerifyFailureDoesNotWriteReport(t *testing.T) {
 	err := runCLI([]string{"--verify", "--profiles", simulator.ProfileDefault, "--out", outDir}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("runCLI(--verify with incomplete defaults) error = nil, want verification failure")
+	}
+	for _, want := range []string{
+		verifyScope,
+		"use the default --profiles and --workloads values",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("runCLI(--verify with incomplete defaults) error = %q, want it to contain %q", err, want)
+		}
 	}
 	if fileExists(t, outDir) {
 		t.Fatalf("output directory %s exists after verification failure, want no report written", outDir)

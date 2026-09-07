@@ -11,8 +11,6 @@ scheduler:
   score:
     enable_scorers:
       - external_http_score
-    resource_weights:
-      external_http_score: 1
     plugin_conf:
       external_http_score:
         weight: 1
@@ -25,12 +23,18 @@ scheduler:
 Fields:
 
 - `weight`: score plugin weight used by the existing weighted score pipeline.
+  Explicit zero disables the scorer and prevents an HTTP request.
 - `endpoint`: HTTP endpoint to call. Empty means the scorer is skipped.
 - `timeout`: per-request timeout. Values less than or equal to zero use the built-in default of `200ms`.
 - `mode`: opaque string passed to the external service so it can select a scoring policy.
 - `disable`: secondary switch. When true, the scorer is skipped.
 
-If `external_http_score` is listed in `enable_scorers` but `plugin_conf.external_http_score` is omitted, CubeMaster treats this scorer as disabled. This keeps scheduler startup tolerant of incomplete custom plugin configuration; the scorer only sends HTTP requests when both the scorer name and endpoint are configured.
+`resource_weights` contains factor weights and does not set this plugin's
+weight. Whenever the final effective `enable_scorers` contains
+`external_http_score`, omitting `plugin_conf.external_http_score` is a
+configuration error. The scorer sends HTTP requests only when its name,
+configuration, endpoint, and non-zero weight are present and it is not
+disabled.
 
 ## Request
 

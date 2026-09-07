@@ -79,11 +79,18 @@ scheduler:
 | `metric_update_timeout` | Treat resource metrics as stale after this duration. It should be much larger than the Cubelet report interval. |
 | `local_metric_update_timeout` | Reserved local-metric timeout field. Current prefilter logic gates both global and local metric freshness with `metric_update_timeout`. |
 | `filter.enable_filters` | Enables scheduling filters. Common filters include CPU, memory, template locality, and real-time create concurrency. |
-| `score.enable_scorers` | Enables scoring plugins. Multi-node deployments usually enable `real_time_weighted_average`; when it is enabled, the matching `score.plugin_conf.real_time_weighted_average` block is required or CubeMaster can panic during scheduler startup. |
+| `score.enable_scorers` | Enables scoring plugins. Every registered scorer in the final effective list requires its matching `score.plugin_conf.<scorer>` block. Missing configuration fails during config loading with the scorer and config path in the error; scheduler construction is not reached. |
 | `score.resource_weights` | Controls the influence of MVM count, create concurrency, CPU quota usage, and memory quota usage. Higher weight means stronger influence; factors must also be listed under `score.plugin_conf.real_time_weighted_average.enable_weight_factors`. |
 | `node_max_mvm_num` / `node_max_mvm_num_conf` | Global or per-instance-type single-node MVM limits. Cubelet-reported `max_mvm_num` also participates in the effective limit. |
 | `disk_usage_max_percent` | Threshold used by the `disk` filter and backoff path to avoid placing more sandboxes on nearly full machines. |
 | `affinityconf` / `node_affinity_selector_allowed_keys` | Controls affinity and constraints by cluster label, zone, CPU type, instance type, and other allowed selector keys. |
+
+This requirement applies to direct `score.enable_scorers` configuration and to
+scorers inherited or selected by a user Profile. Built-in Profiles remain
+self-contained: `balanced_spread`, `template_locality_first`, and
+`binpack_utilization` inject safe defaults for their own realtime, image, and
+binpack scorers when those blocks are absent. User Profiles, including keys
+that override a built-in name, do not receive hidden plugin configuration.
 
 ## How node metadata affects scheduling
 

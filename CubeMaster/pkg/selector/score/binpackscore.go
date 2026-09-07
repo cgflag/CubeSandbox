@@ -79,11 +79,13 @@ func binpackScoreRuntime() (weight float64, disable bool) {
 	if cfg.Disable {
 		return 0, true
 	}
-	weight = cfg.Weight
-	if weight <= 0 {
-		weight = 1
+	if cfg.Weight == 0 {
+		return 0, true
 	}
-	return weight, false
+	if cfg.Weight < 0 {
+		return 1, false
+	}
+	return cfg.Weight, false
 }
 
 func binpackScoreFactorWeights() (cpuW, memW, mvmW float64) {

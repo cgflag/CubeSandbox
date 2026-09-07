@@ -38,7 +38,8 @@ func (l *affinityScore) Weight() float64 {
 	return l.weight
 }
 func (l *affinityScore) Disable() bool {
-	return config.GetConfig().Scheduler.Score.ScorePluginConf.AffinityScore.Disable
+	cfg := config.GetConfig().Scheduler.Score.ScorePluginConf.AffinityScore
+	return cfg.Disable || cfg.Weight == 0
 }
 
 func (l *affinityScore) Select(selCtx *selctx.SelectorCtx) (nodes node.NodeScoreList,
@@ -48,6 +49,9 @@ func (l *affinityScore) Select(selCtx *selctx.SelectorCtx) (nodes node.NodeScore
 			err = ret.Errorf(errorcode.ErrorCode_MasterInternalError, "affinityScore panic:%s", r)
 		}
 	}()
+	if l.Disable() {
+		return nil, nil
+	}
 
 	inList := selCtx.Nodes()
 	nodes = make(node.NodeScoreList, 0, inList.Len())

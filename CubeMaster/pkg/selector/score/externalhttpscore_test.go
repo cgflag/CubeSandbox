@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,9 @@ import (
 )
 
 func TestExternalHTTPScoreSelectUsesSidecarScores(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("method = %s, want POST", r.Method)
@@ -94,6 +98,9 @@ func TestExternalHTTPScoreSelectUsesSidecarScores(t *testing.T) {
 }
 
 func TestExternalHTTPScoreRequestBodyMatchesProtocol(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	const wantMode = "protocol-contract"
 	var (
 		gotMethod      string
@@ -234,6 +241,9 @@ func jsonNumberEquals(got any, want float64) bool {
 }
 
 func TestExternalHTTPScoreRejectsInvalidScore(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(externalHTTPScoreResponse{
 			Scores: map[string]float64{
@@ -371,6 +381,9 @@ func TestExternalHTTPScoreValidateCandidates(t *testing.T) {
 }
 
 func TestExternalHTTPScoreRejectsDuplicateCandidateBeforeRequest(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("external HTTP scorer should reject duplicate candidates before calling endpoint")
 	}))
@@ -391,6 +404,9 @@ func TestExternalHTTPScoreRejectsDuplicateCandidateBeforeRequest(t *testing.T) {
 }
 
 func TestExternalHTTPScoreRejectsHTTPError(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
@@ -405,6 +421,9 @@ func TestExternalHTTPScoreRejectsHTTPError(t *testing.T) {
 }
 
 func TestExternalHTTPScoreRejectsUnknownNode(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(externalHTTPScoreResponse{
 			Scores: map[string]float64{
@@ -424,6 +443,9 @@ func TestExternalHTTPScoreRejectsUnknownNode(t *testing.T) {
 }
 
 func TestExternalHTTPScoreRejectsMissingNode(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(externalHTTPScoreResponse{
 			Scores: map[string]float64{
@@ -442,6 +464,9 @@ func TestExternalHTTPScoreRejectsMissingNode(t *testing.T) {
 }
 
 func TestExternalHTTPScoreRejectsEmptyScores(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(externalHTTPScoreResponse{
 			Scores: map[string]float64{},
@@ -458,6 +483,9 @@ func TestExternalHTTPScoreRejectsEmptyScores(t *testing.T) {
 }
 
 func TestExternalHTTPScoreRejectsMissingScoresField(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
 	}))
@@ -472,6 +500,9 @@ func TestExternalHTTPScoreRejectsMissingScoresField(t *testing.T) {
 }
 
 func TestExternalHTTPScoreRejectsMalformedJSON(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("{"))
 	}))
@@ -486,6 +517,9 @@ func TestExternalHTTPScoreRejectsMalformedJSON(t *testing.T) {
 }
 
 func TestExternalHTTPScoreTimesOut(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		_ = json.NewEncoder(w).Encode(externalHTTPScoreResponse{
@@ -511,6 +545,9 @@ func TestExternalHTTPScoreTimesOut(t *testing.T) {
 }
 
 func TestExternalHTTPScoreUsesDefaultTimeout(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)
 		_ = json.NewEncoder(w).Encode(externalHTTPScoreResponse{
@@ -539,6 +576,9 @@ func TestExternalHTTPScoreUsesDefaultTimeout(t *testing.T) {
 }
 
 func TestExternalHTTPScoreSkipsWhenEndpointEmpty(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	initExternalHTTPScoreTestConfig(t, "")
 
 	got, err := NewExternalHTTPScore().Select(externalHTTPScoreTestCtx())
@@ -551,6 +591,9 @@ func TestExternalHTTPScoreSkipsWhenEndpointEmpty(t *testing.T) {
 }
 
 func TestExternalHTTPScoreSkipsWhenDisabled(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("disabled external HTTP scorer should not call endpoint")
 	}))
@@ -573,7 +616,43 @@ func TestExternalHTTPScoreSkipsWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestExternalHTTPScoreZeroWeightSkipsRequest(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = true
+		t.Error("zero-weight external HTTP scorer should not call endpoint")
+	}))
+	defer server.Close()
+
+	initExternalHTTPScoreTestConfigWithPluginConfig(t, `
+        weight: 0
+        endpoint: "`+server.URL+`"
+        timeout: 1s
+`)
+
+	scorer := NewExternalHTTPScore()
+	if !scorer.Disable() {
+		t.Fatal("Disable() = false, want true for weight: 0")
+	}
+	got, err := scorer.Select(externalHTTPScoreTestCtx())
+	if err != nil {
+		t.Fatalf("Select() error = %v, want nil", err)
+	}
+	if got != nil {
+		t.Fatalf("Select() = %+v, want nil", got)
+	}
+	if requested {
+		t.Fatal("zero-weight external HTTP scorer sent a request")
+	}
+}
+
 func TestExternalHTTPScoreRejectsOversizedResponseBody(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(make([]byte, externalHTTPScoreMaxResponseBytes+1))
@@ -589,6 +668,9 @@ func TestExternalHTTPScoreRejectsOversizedResponseBody(t *testing.T) {
 }
 
 func TestExternalHTTPScoreRegisteredByConfig(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(externalHTTPScoreResponse{
 			Scores: map[string]float64{
@@ -611,6 +693,9 @@ func TestExternalHTTPScoreRegisteredByConfig(t *testing.T) {
 }
 
 func TestExternalHTTPScoreUnknownScorerDoesNotBlockKnownScorer(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(externalHTTPScoreResponse{
 			Scores: map[string]float64{
@@ -654,7 +739,10 @@ scheduler:
 	}
 }
 
-func TestExternalHTTPScoreMissingPluginConfigIsDisabled(t *testing.T) {
+func TestExternalHTTPScoreMissingPluginConfigFailsFast(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	configPath := filepath.Join(t.TempDir(), "cubemaster.yaml")
 	content := `common: {}
 log: {}
@@ -669,27 +757,17 @@ scheduler:
 		t.Fatalf("write config: %v", err)
 	}
 	t.Setenv("CUBE_MASTER_CONFIG_PATH", configPath)
-	if _, err := config.Init(); err != nil {
-		t.Fatalf("config.Init(): %v", err)
-	}
-
-	selectors := NewSelector(context.Background())
-	if len(selectors) != 1 {
-		t.Fatalf("len(selectors) = %d, want 1", len(selectors))
-	}
-	if !selectors[0].Disable() {
-		t.Fatal("external_http_score with missing plugin config should be disabled")
-	}
-	got, err := selectors[0].Select(externalHTTPScoreTestCtx())
-	if err != nil {
-		t.Fatalf("Select() error = %v, want nil", err)
-	}
-	if got != nil {
-		t.Fatalf("Select() = %+v, want nil scores", got)
+	if _, err := config.Init(); err == nil {
+		t.Fatal("config.Init() error = nil, want missing plugin_conf error")
+	} else if !strings.Contains(err.Error(), "plugin_conf.external_http_score") {
+		t.Fatalf("config.Init() error = %v, want plugin_conf.external_http_score", err)
 	}
 }
 
 func TestExternalHTTPScoreNotEnabledByDefault(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("external HTTP scorer should not be called unless it is enabled")
 	}))

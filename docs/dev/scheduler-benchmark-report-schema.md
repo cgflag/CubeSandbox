@@ -23,9 +23,13 @@ It writes `report.json` and `report.md` by default. Use `--format json`,
 `--format markdown`, or `--format both` to select output files.
 
 Run `go run ./cmd/schedulerbench --verify --out ./schedulerbench-report` to
-check the generated in-memory report against this default workload/profile,
-metric, comparison, and simulator-only latency contract before files are
-written. This verifies report structure and terminology only; it does not
+check the generated in-memory report against the default workload/profile
+acceptance contract, including its metric, comparison, and simulator-only
+latency requirements, before files are written. `--verify` is not a validator
+for arbitrary runs: a valid run with a reduced `--profiles` or `--workloads`
+selection fails verification because it does not contain the default acceptance
+matrix. Such reduced runs can still generate reports when `--verify` is
+omitted. Verification checks report structure and terminology only; it does not
 validate a real multi-node run or measured CubeAPI/Cubelet create latency.
 
 ## Top-Level Shape
@@ -133,8 +137,8 @@ validate a real multi-node run or measured CubeAPI/Cubelet create latency.
 }
 ```
 
-The example above is abbreviated. Treat the checked-in
-`CubeMaster/schedulerbench-report/report.json` as the concrete generated sample.
+The example above is abbreviated. Generate a complete report locally when
+needed; generated benchmark reports are not checked into the repository.
 
 ## Top-Level Fields
 

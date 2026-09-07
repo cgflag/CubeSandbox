@@ -79,11 +79,17 @@ scheduler:
 | `metric_update_timeout` | 节点资源指标多久未更新后视为不可调度。应明显大于 Cubelet 上报周期。 |
 | `local_metric_update_timeout` | 预留的本地指标超时字段。当前 prefilter 对全局指标和本地指标的新鲜度检查都使用 `metric_update_timeout`。 |
 | `filter.enable_filters` | 启用调度过滤器。常见过滤器包括 CPU、内存、模板本地性和实时创建并发。 |
-| `score.enable_scorers` | 启用评分器。多机部署通常启用 `real_time_weighted_average`；启用时必须同时配置 `score.plugin_conf.real_time_weighted_average`，否则 CubeMaster 可能在 scheduler 启动阶段 panic。 |
+| `score.enable_scorers` | 启用评分器。最终生效列表中的每个已注册评分器都必须有对应的 `score.plugin_conf.<scorer>` 配置块；缺失时在配置加载阶段 fail-fast，错误会指出评分器和配置路径，不会进入 scheduler 构造阶段。 |
 | `score.resource_weights` | 控制 MVM 数、创建并发、CPU/内存 quota 使用率等因子的权重。权重越高，该因子对分数影响越大；对应因子也必须列在 `score.plugin_conf.real_time_weighted_average.enable_weight_factors` 中。 |
 | `node_max_mvm_num` / `node_max_mvm_num_conf` | 全局或按实例类型限制单节点 MVM 数。Cubelet 上报的 `max_mvm_num` 也会参与实际上限计算。 |
 | `disk_usage_max_percent` | `disk` filter 和 backoff 路径使用的磁盘水位阈值，用于避免继续调度到快满的机器。 |
 | `affinityconf` / `node_affinity_selector_allowed_keys` | 控制按 cluster label、zone、CPU 类型、机型等做亲和或约束选择。 |
+
+该要求同时适用于直接配置的 `score.enable_scorers`，以及用户 Profile
+继承或选择的评分器。内置 Profile 保持自包含：
+`balanced_spread`、`template_locality_first` 和 `binpack_utilization`
+在缺少对应配置块时，会分别为 realtime、image 和 binpack 评分器注入安全默认。
+用户 Profile（包括覆盖内置同名 key 的 Profile）不会获得隐藏的插件配置。
 
 ## 节点元数据如何影响调度
 

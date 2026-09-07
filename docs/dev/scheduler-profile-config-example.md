@@ -14,15 +14,15 @@ Copyable YAML for CubeMaster **runtime** Profile overlay. HTTP scorer protocol:
 ## Scope
 
 This document shows how to set `scheduler.profile` and `scheduler.profiles` so
-config `preHandle` copies existing Filter/Score selector lists and
-`resource_weights` onto `scheduler.filter` / `scheduler.score`.
+config `preHandle` applies Filter/Score selector lists and merges Profile
+`resource_weights` over the base `scheduler.score.resource_weights` map.
 
 In scope:
 
 - user-defined runtime Profile overlay;
 - built-in presets `balanced_spread`, `template_locality_first`,
   `binpack_utilization` (empty `scheduler.profile` still leaves defaults);
-- enabling `external_http_score` **by name/weight** in a profile;
+- enabling `external_http_score` by name in a profile;
 - keeping `plugin_conf` on `scheduler.score.plugin_conf`.
 
 Out of scope:
@@ -45,7 +45,7 @@ Source: `CubeMaster/pkg/base/config/config.go`
 | `scheduler.profiles` | User-defined map of named overlays. A user key with the same name as a built-in **overrides** the built-in. |
 | `scheduler.profiles.<name>.filter.enable_filters` | Copied onto `scheduler.filter.enable_filters`. |
 | `scheduler.profiles.<name>.score.enable_scorers` | Copied onto `scheduler.score.enable_scorers`. |
-| `scheduler.profiles.<name>.score.resource_weights` | Copied onto `scheduler.score.resource_weights`. |
+| `scheduler.profiles.<name>.score.resource_weights` | Merged over `scheduler.score.resource_weights`; Profile keys win and unrelated base keys remain. These are factor weights, not plugin weights. |
 | `scheduler.score.plugin_conf.*` | Per-scorer params. **Not** a profile overlay field. |
 
 A runtime Profile is a **selector overlay**. It does not change
@@ -53,12 +53,21 @@ A runtime Profile is a **selector overlay**. It does not change
 existing filters/scores (plus thin `binpack_score`). They are **not**
 simulator built-in strategy weights.
 
-`SchedulerProfileScoreConf` intentionally omits `plugin_conf`. A profile can
-list `external_http_score` or `real_time_weighted_average` / `image_score` in
-`enable_scorers`, but HTTP and those scorers' `plugin_conf` stay on
-`scheduler.score.plugin_conf`. Missing `plugin_conf` for `real_time_weighted_average`
-or `image_score` still panics at selector construction (existing behavior).
-`binpack_score` uses safe defaults when `plugin_conf.binpack_score` is omitted.
+`SchedulerProfileScoreConf` intentionally omits `plugin_conf`. Every registered
+scorer listed in the final effective `enable_scorers` requires its corresponding
+`scheduler.score.plugin_conf` block; missing configuration fails before
+scheduler construction. This applies to direct configuration and scorers
+inherited through a partial Profile as well as scorers listed by a user
+Profile. The three built-ins inject self-contained defaults for their own
+scorers: `balanced_spread` for `real_time_weighted_average`,
+`template_locality_first` for `image_score`, and `binpack_utilization` for
+`binpack_score`.
+
+Factor-based `real_time_weighted_average`,
+`multi_factor_weighted_average`, and `image_score` are constructed only when
+at least one of their `enable_weight_factors` has a positive
+`resource_weights` value. `affinity_score`, `external_http_score`, and
+`binpack_score` do not use that map as a construction gate.
 
 Unknown `scheduler.profile` names (not user-defined and not built-in) and
 unknown filter/score names in the selected overlay fail closed in
@@ -86,46 +95,26 @@ Allowed score names (must match `CubeMaster/pkg/selector/score/init.go`):
 
 Leave `scheduler.profile` empty to keep the current Filter/Score config.
 Setting a built-in name does **not** require a matching key under
-`scheduler.profiles`. Keep `plugin_conf` for `real_time_weighted_average` and
-`image_score` on `scheduler.score` if those scorers are enabled.
+`scheduler.profiles`.
 
-`balanced_spread` (high-concurrency short-lived sandboxes). Requires existing
-`plugin_conf.real_time_weighted_average` or CubeMaster panics when constructing
-that scorer:
+`balanced_spread` (high-concurrency short-lived sandboxes) supplies a default
+`real_time_weighted_average` block:
 
 ```yaml
 scheduler:
   profile: balanced_spread
-  score:
-    plugin_conf:
-      real_time_weighted_average:
-        weight: 1
-        enable_weight_factors:
-          - realtime_create_num
-          - mvm_num
-          - cpu_util
-          - quota_cpu_usage
-          - quota_mem_usage
 ```
 
-`template_locality_first` (repeated same-template creates). Requires existing
-`plugin_conf.image_score`:
+`template_locality_first` (repeated same-template creates) likewise supplies
+safe `image_score` defaults:
 
 ```yaml
 scheduler:
   profile: template_locality_first
-  score:
-    plugin_conf:
-      image_score:
-        weight: 1
-        enable_weight_factors:
-          - image_id
-          - template_id
 ```
 
-`binpack_utilization` (mixed-size / long-lived). `binpack_score` stays enabled
-with equal CPU/mem/MVM occupancy weights when `plugin_conf.binpack_score` is
-omitted:
+`binpack_utilization` (mixed-size / long-lived) injects plugin weight 1 and
+equal CPU/memory/MVM occupancy weights when its plugin block is omitted:
 
 ```yaml
 scheduler:
@@ -156,15 +145,26 @@ scheduler:
           - image_score
           - affinity_score
         resource_weights:
-          image_score: 1
-          affinity_score: 1
+          image_id: 1
+          template_id: 2
+  score:
+    plugin_conf:
+      image_score:
+        weight: 1
+        enable_weight_factors:
+          - image_id
+          - template_id
+      affinity_score:
+        weight: 1
 ```
 
 What this overlay copies at `preHandle`:
 
 - `scheduler.filter.enable_filters` becomes `cpu`, `mem`, `template_locality`;
 - `scheduler.score.enable_scorers` becomes `image_score`, `affinity_score`;
-- `scheduler.score.resource_weights` becomes the map above.
+- the Profile factor weights merge over existing
+  `scheduler.score.resource_weights`; plugin weights remain under
+  `plugin_conf`.
 
 Omitted overlay sections are left untouched. A filter-only profile does not
 clear existing `enable_scorers`; a score-only profile does not clear existing
@@ -173,7 +173,7 @@ clear existing `enable_scorers`; a score-only profile does not clear existing
 ## ExternalHTTPScore Profile Example
 
 A profile may **enable** `external_http_score` by listing it in
-`enable_scorers` (and optionally weighting it). The HTTP plugin parameters
+`enable_scorers`. The HTTP plugin weight and parameters
 must still be set on `scheduler.score.plugin_conf.external_http_score`.
 Do **not** put `plugin_conf` under `scheduler.profiles.<name>.score`.
 
@@ -189,11 +189,7 @@ scheduler:
           - template_locality
       score:
         enable_scorers:
-          - image_score
           - external_http_score
-        resource_weights:
-          image_score: 1
-          external_http_score: 2
   score:
     plugin_conf:
       external_http_score:
@@ -204,9 +200,13 @@ scheduler:
         disable: false
 ```
 
-If `external_http_score` is listed in `enable_scorers` but
-`plugin_conf.external_http_score` is omitted, CubeMaster constructs a
-disabled scorer (no HTTP). Protocol fields and demo endpoint:
+If `external_http_score` is listed in the final `enable_scorers` but
+`plugin_conf.external_http_score` is omitted, configuration fails fast.
+Merely placing `external_http_score` in `resource_weights` neither enables nor
+weights the plugin. For every scorer, explicit `weight: 0` disables it and its
+`Select` method is skipped. For binpack compatibility, a negative plugin weight
+retains the previous `<= 0` fallback value of 1; only exact zero has the new
+disable meaning. Protocol fields and demo endpoint:
 `docs/dev/external-http-score.md`.
 
 Invalid (will not overlay `plugin_conf`; the Go type has no such field):
@@ -233,7 +233,7 @@ but are **not equivalent**.
 | | Runtime Profile | Simulator strategy profile |
 |---|---|---|
 | Where | CubeMaster config: `scheduler.profile` / `scheduler.profiles` | Offline `schedulerbench` / `pkg/scheduler/simulator` `weightsForProfile` |
-| What it is | User-defined overlay of existing filter/score selector names and `resource_weights` | Scoring-weight preset inside the offline placement model |
+| What it is | User-defined overlay of existing filter/score selector names and factor `resource_weights` | Scoring-weight preset inside the offline placement model |
 | Built-in names | `balanced_spread`, `template_locality_first`, `binpack_utilization` (selector overlay; user map key overrides). Operators may also choose other map keys. | **simulator-only weights:** `default`, `balanced_spread`, `template_locality_first`, `binpack_utilization` |
 | `plugin_conf` | Not overlayable. HTTP params stay on `scheduler.score.plugin_conf` | Not CubeMaster scheduler YAML |
 
@@ -258,6 +258,8 @@ production performance.
   other operator-chosen name).
 - Use only registered selector names listed above.
 - Keep `plugin_conf` on `scheduler.score.plugin_conf`.
+- Put scorer/plugin weights under `plugin_conf.<scorer>.weight`; do not use a
+  scorer name as a `resource_weights` key.
 - Leave `scheduler.profile` empty when you want existing Filter/Score config
   unchanged.
 - Treat runtime built-in presets and simulator `weightsForProfile` as two

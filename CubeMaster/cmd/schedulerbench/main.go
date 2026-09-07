@@ -20,6 +20,7 @@ const (
 	formatMarkdown = "markdown"
 	formatBoth     = "both"
 	defaultFormat  = formatBoth
+	verifyScope    = "default workload/profile acceptance contract"
 )
 
 func main() {
@@ -40,7 +41,7 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 		profiles  = flags.String("profiles", strings.Join(defaultConfig.Profiles, ","), "comma-separated profile list")
 		workloads = flags.String("workloads", strings.Join(defaultConfig.Workloads, ","), "comma-separated workload list")
 		format    = flags.String("format", defaultFormat, "report format: json, markdown, or both")
-		verify    = flags.Bool("verify", false, "verify the default simulator benchmark acceptance contract")
+		verify    = flags.Bool("verify", false, "verify the default workload/profile acceptance contract (not arbitrary --profiles/--workloads subsets)")
 	)
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -65,7 +66,7 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 	}
 	if *verify {
 		if err := simulator.VerifyDefaultReport(report); err != nil {
-			return fmt.Errorf("scheduler benchmark verification failed: %w", err)
+			return fmt.Errorf("scheduler benchmark %s verification failed; use the default --profiles and --workloads values: %w", verifyScope, err)
 		}
 	}
 
@@ -73,7 +74,7 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if *verify {
-		fmt.Fprintln(stdout, "scheduler benchmark verification passed")
+		fmt.Fprintf(stdout, "scheduler benchmark %s verification passed\n", verifyScope)
 	}
 	fmt.Fprintf(stdout, "scheduler benchmark report written to %s\n", *outDir)
 	return nil

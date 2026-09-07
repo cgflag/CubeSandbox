@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"testing"
 
@@ -124,6 +126,10 @@ func TestRunScoreFilterSkipsFailedScorers(t *testing.T) {
 }
 
 func TestRunScoreFilterExternalHTTPScoreChangesPlacementOrder(t *testing.T) {
+	if runIsolatedSchedulerConfigTest(t) {
+		return
+	}
+
 	origPostScore := scheduler.postScore
 	defer func() {
 		scheduler.postScore = origPostScore
@@ -166,6 +172,10 @@ func TestRunScoreFilterExternalHTTPScoreChangesPlacementOrder(t *testing.T) {
 }
 
 func TestRunScoreFilterBinpackScorePrefersFullerNode(t *testing.T) {
+	if runIsolatedSchedulerConfigTest(t) {
+		return
+	}
+
 	origPostScore := scheduler.postScore
 	defer func() {
 		scheduler.postScore = origPostScore
@@ -183,8 +193,9 @@ scheduler:
   score:
     enable_scorers:
       - binpack_score
-    resource_weights:
-      binpack_score: 1
+    plugin_conf:
+      binpack_score:
+        weight: 1
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -229,6 +240,10 @@ scheduler:
 // create latency. It proves scheduler.profile overlay reaches score.NewSelector
 // and production runScoreFilter, changing candidate order vs empty profile.
 func TestRunScoreFilterBuiltinProfileOverlayChangesPlacementOrder(t *testing.T) {
+	if runIsolatedSchedulerConfigTest(t) {
+		return
+	}
+
 	origPostScore := scheduler.postScore
 	defer func() {
 		scheduler.postScore = origPostScore
@@ -303,11 +318,45 @@ func initSchedulerYAML(t *testing.T, yamlBody string) {
 	}
 }
 
+const isolatedSchedulerConfigTestEnv = "CUBEMASTER_ISOLATED_SCHEDULER_CONFIG_TEST"
+
+// runIsolatedSchedulerConfigTest runs config-mutating tests in a child test
+// process because config exposes no setter that can restore its package-global
+// pointer, including the original nil state.
+func runIsolatedSchedulerConfigTest(t *testing.T) bool {
+	t.Helper()
+	if os.Getenv(isolatedSchedulerConfigTestEnv) == t.Name() {
+		return false
+	}
+
+	originalConfig := config.GetConfig()
+	t.Cleanup(func() {
+		if got := config.GetConfig(); got != originalConfig {
+			t.Errorf("global config changed in parent process: got %p, want %p", got, originalConfig)
+		}
+	})
+
+	cmd := exec.Command(
+		os.Args[0],
+		"-test.run=^"+regexp.QuoteMeta(t.Name())+"$",
+		"-test.count=1",
+	)
+	cmd.Env = append(os.Environ(), isolatedSchedulerConfigTestEnv+"="+t.Name())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("isolated test process failed: %v\n%s", err, output)
+	}
+	return true
+}
+
 // TestRunScoreFilterExternalHTTPScoreMockMetricsFlipChangesPlacementOrder is an
 // in-process/mock-HTTP test only: not real Prometheus and not live multi-node.
 // It proves mock metrics input can flip ExternalHTTPScore ordering through
 // scheduler runScoreFilter.
 func TestRunScoreFilterExternalHTTPScoreMockMetricsFlipChangesPlacementOrder(t *testing.T) {
+	if runIsolatedSchedulerConfigTest(t) {
+		return
+	}
+
 	origPostScore := scheduler.postScore
 	defer func() {
 		scheduler.postScore = origPostScore

@@ -235,12 +235,13 @@ type SchedulerConf struct {
 	// not add scheduling algorithms.
 	Profile string `yaml:"profile"`
 	// Profiles maps named strategy profiles to filter/score selector settings.
-	// User-defined entries expand onto existing enable_filters / enable_scorers /
-	// resource_weights. When Profile names a built-in preset (balanced_spread,
-	// template_locality_first, binpack_utilization) and that key is absent from
-	// this map, applySchedulerProfile uses the built-in overlay. User keys with
-	// the same name override the built-in. Built-in presets are not equivalent
-	// to offline simulator profile scoring weights.
+	// User-defined entries expand onto existing enable_filters / enable_scorers
+	// and merge resource_weights over the base map. When Profile names a
+	// built-in preset (balanced_spread, template_locality_first,
+	// binpack_utilization) and that key is absent from this map,
+	// applySchedulerProfile uses the built-in overlay. User keys with the same
+	// name override the built-in. Built-in presets are not equivalent to
+	// offline simulator profile scoring weights.
 	Profiles                         map[string]SchedulerProfileConf `yaml:"profiles"`
 	DisableCircuitFilter             bool                            `yaml:"disable_circuit_filter"`
 	InBackoffMode                    bool                            `yaml:"in_backoff_mode"`
@@ -1039,6 +1040,9 @@ func preHandleScheduler(config *Config) error {
 	if err := applySchedulerProfile(&config.Scheduler.SchedulerConf); err != nil {
 		return err
 	}
+	if err := validateSchedulerScorePluginConfig(&config.Scheduler.SchedulerConf); err != nil {
+		return err
+	}
 
 	preHandOverhead(config)
 
@@ -1174,7 +1178,7 @@ func applySchedulerProfile(s *SchedulerConf) error {
 	if s == nil || s.Profile == "" {
 		return nil
 	}
-	profile, err := resolveSchedulerProfile(s)
+	profile, builtin, err := resolveSchedulerProfile(s)
 	if err != nil {
 		return err
 	}
@@ -1200,29 +1204,102 @@ func applySchedulerProfile(s *SchedulerConf) error {
 			if s.Score == nil {
 				s.Score = &SchedulerScoreConf{}
 			}
-			weights := make(map[string]float64, len(profile.Score.ResourceWeights))
+			weights := make(map[string]float64, len(s.Score.ResourceWeights)+len(profile.Score.ResourceWeights))
+			for k, v := range s.Score.ResourceWeights {
+				weights[k] = v
+			}
 			for k, v := range profile.Score.ResourceWeights {
 				weights[k] = v
 			}
 			s.Score.ResourceWeights = weights
 		}
 	}
+	if builtin {
+		applyBuiltinSchedulerProfileDefaults(s)
+	}
 	return nil
 }
 
-func resolveSchedulerProfile(s *SchedulerConf) (SchedulerProfileConf, error) {
+func applyBuiltinSchedulerProfileDefaults(s *SchedulerConf) {
+	if s == nil || s.Score == nil {
+		return
+	}
+	switch s.Profile {
+	case RuntimeProfileBalancedSpread:
+		if s.Score.ScorePluginConf.RealTimeWeightedAverage == nil {
+			s.Score.ScorePluginConf.RealTimeWeightedAverage = &RealTimeWeightedAverage{
+				Weight: 1,
+				EnableWeightFactors: []string{
+					constants.WeightFactorRealTimeCreateNum,
+					constants.WeightFactorMvmNum,
+					constants.WeightFactorCpuUtil,
+					constants.WeightFactorQuotaCpu,
+					constants.WeightFactorQuotaMem,
+				},
+			}
+		}
+	case RuntimeProfileTemplateLocalityFirst:
+		if s.Score.ScorePluginConf.ImageScore == nil {
+			s.Score.ScorePluginConf.ImageScore = &ImageScore{
+				Weight:              1,
+				EnableWeightFactors: []string{constants.WeightFactorImageID, constants.WeightFactorTemplateID},
+			}
+		}
+	case RuntimeProfileBinpackUtilization:
+		if s.Score.ScorePluginConf.BinpackScore == nil {
+			s.Score.ScorePluginConf.BinpackScore = &BinpackScore{
+				Weight:    1,
+				CPUWeight: 1,
+				MemWeight: 1,
+				MvmWeight: 1,
+			}
+		}
+	}
+}
+
+// validateSchedulerScorePluginConfig checks the final effective scorer list
+// after Profile overlays and built-in defaults have been applied.
+func validateSchedulerScorePluginConfig(s *SchedulerConf) error {
+	if s == nil || s.Score == nil {
+		return nil
+	}
+	for _, name := range s.Score.EnableScorers {
+		missing := false
+		switch name {
+		case "real_time_weighted_average":
+			missing = s.Score.ScorePluginConf.RealTimeWeightedAverage == nil
+		case "multi_factor_weighted_average":
+			missing = s.Score.ScorePluginConf.MultiFactorWeightedAverage == nil
+		case "affinity_score":
+			missing = s.Score.ScorePluginConf.AffinityScore == nil
+		case "image_score":
+			missing = s.Score.ScorePluginConf.ImageScore == nil
+		case "external_http_score":
+			missing = s.Score.ScorePluginConf.ExternalHTTPScore == nil
+		case "binpack_score":
+			missing = s.Score.ScorePluginConf.BinpackScore == nil
+		}
+		if missing {
+			return fmt.Errorf("scheduler.score.enable_scorers enables %q but scheduler.score.plugin_conf.%s is missing",
+				name, name)
+		}
+	}
+	return nil
+}
+
+func resolveSchedulerProfile(s *SchedulerConf) (SchedulerProfileConf, bool, error) {
 	if s.Profiles != nil {
 		if profile, ok := s.Profiles[s.Profile]; ok {
-			return profile, nil
+			return profile, false, nil
 		}
 	}
 	if profile, ok := builtinSchedulerProfiles()[s.Profile]; ok {
-		return profile, nil
+		return profile, true, nil
 	}
 	if s.Profiles == nil {
-		return SchedulerProfileConf{}, fmt.Errorf("scheduler profile %q not found: profiles map is empty", s.Profile)
+		return SchedulerProfileConf{}, false, fmt.Errorf("scheduler profile %q not found: profiles map is empty", s.Profile)
 	}
-	return SchedulerProfileConf{}, fmt.Errorf("scheduler profile %q not found", s.Profile)
+	return SchedulerProfileConf{}, false, fmt.Errorf("scheduler profile %q not found", s.Profile)
 }
 
 func builtinSchedulerProfiles() map[string]SchedulerProfileConf {
@@ -1251,7 +1328,6 @@ func builtinSchedulerProfiles() map[string]SchedulerProfileConf {
 				ResourceWeights: map[string]float64{
 					"image_id":    1,
 					"template_id": 2,
-					"image_score": 2,
 				},
 			},
 		},
@@ -1261,9 +1337,6 @@ func builtinSchedulerProfiles() map[string]SchedulerProfileConf {
 			},
 			Score: &SchedulerProfileScoreConf{
 				EnableScorers: []string{"binpack_score"},
-				ResourceWeights: map[string]float64{
-					"binpack_score": 1,
-				},
 			},
 		},
 	}

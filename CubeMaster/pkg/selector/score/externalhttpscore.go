@@ -82,7 +82,7 @@ func (l *externalHTTPScore) Weight() float64 {
 
 func (l *externalHTTPScore) Disable() bool {
 	cfg := getExternalHTTPScoreConfig()
-	return cfg == nil || cfg.Disable
+	return cfg == nil || cfg.Disable || cfg.Weight == 0
 }
 
 func (l *externalHTTPScore) Select(selCtx *selctx.SelectorCtx) (nodes node.NodeScoreList, err error) {
