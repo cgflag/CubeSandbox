@@ -38,6 +38,66 @@ scheduler:
 	}
 }
 
+func TestBinpackBuiltinProfilePreservesExplicitConfig(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
+	tests := []struct {
+		name        string
+		pluginYAML  string
+		wantWeight  float64
+		wantDisable bool
+	}{
+		{
+			name:       "custom weight",
+			pluginYAML: "        weight: 3\n        cpu_weight: 2\n",
+			wantWeight: 3,
+		},
+		{
+			name:        "zero weight",
+			pluginYAML:  "        weight: 0\n",
+			wantDisable: true,
+		},
+		{
+			name:        "explicit disable",
+			pluginYAML:  "        weight: 3\n        disable: true\n",
+			wantDisable: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initBinpackScoreTestConfig(t, `common: {}
+log: {}
+scheduler:
+  profile: binpack_utilization
+  score:
+    plugin_conf:
+      binpack_score:
+`+tt.pluginYAML)
+
+			cfg := config.GetConfig().Scheduler.Score.ScorePluginConf.BinpackScore
+			if cfg == nil {
+				t.Fatal("plugin_conf.binpack_score = nil, want explicit config preserved")
+			}
+			if cfg.Weight != tt.wantWeight && !tt.wantDisable {
+				t.Fatalf("config weight = %v, want %v", cfg.Weight, tt.wantWeight)
+			}
+			if tt.name == "custom weight" && cfg.CPUWeight != 2 {
+				t.Fatalf("config cpu_weight = %v, want 2", cfg.CPUWeight)
+			}
+
+			scorer := NewBinpackScore()
+			if scorer.Disable() != tt.wantDisable {
+				t.Fatalf("Disable() = %v, want %v", scorer.Disable(), tt.wantDisable)
+			}
+			if !tt.wantDisable && scorer.Weight() != tt.wantWeight {
+				t.Fatalf("Weight() = %v, want %v", scorer.Weight(), tt.wantWeight)
+			}
+		})
+	}
+}
+
 func TestBinpackScoreDisableSkipsSelect(t *testing.T) {
 	if runIsolatedScoreConfigTest(t) {
 		return
