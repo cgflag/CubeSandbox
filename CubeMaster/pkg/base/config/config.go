@@ -216,25 +216,38 @@ type RedisConf struct {
 }
 
 type SchedulerConf struct {
-	Overhead                         *OverheadConf                `yaml:"overhead"`
-	NodeMaxMvmNum                    int64                        `yaml:"node_max_mvm_num"`
-	NodeMaxMvmNumReserveNumPercent   float64                      `yaml:"node_max_mvm_num_reserve_num_percent"`
-	NodeMaxMemReservedInMB           int64                        `yaml:"node_max_mem_reserved_in_mb"`
-	NodeMaxCpuUtil                   float64                      `yaml:"node_max_cpu_util"`
-	PreSelectNum                     int                          `yaml:"pre_select_num"`
-	PrioritySelectNum                int                          `yaml:"priority_select_num"`
-	LeastSelectName                  string                       `yaml:"least_select_name"`
-	MetricUpdateTimeout              time.Duration                `yaml:"metric_update_timeout"`
-	LocalMetricUpdateTimeout         time.Duration                `yaml:"local_metric_update_timeout"`
-	Filter                           *SchedulerFilterConf         `yaml:"filter"`
-	Score                            *SchedulerScoreConf          `yaml:"score"`
-	PostScore                        *PostScoreConf               `yaml:"postscore"`
-	DisableCircuitFilter             bool                         `yaml:"disable_circuit_filter"`
-	InBackoffMode                    bool                         `yaml:"in_backoff_mode"`
-	AffinityConf                     map[string]AffinityConf      `yaml:"affinityconf"`
-	NodeMaxMvmNumConf                map[string]NodeMaxMvmNumConf `yaml:"node_max_mvm_num_conf"`
-	EnableRunInstanceHostIps         bool                         `yaml:"enable_run_instance_host_ips"`
-	MaxMvmCPU                        string                       `yaml:"max_mvm_cpu"`
+	Overhead                       *OverheadConf        `yaml:"overhead"`
+	NodeMaxMvmNum                  int64                `yaml:"node_max_mvm_num"`
+	NodeMaxMvmNumReserveNumPercent float64              `yaml:"node_max_mvm_num_reserve_num_percent"`
+	NodeMaxMemReservedInMB         int64                `yaml:"node_max_mem_reserved_in_mb"`
+	NodeMaxCpuUtil                 float64              `yaml:"node_max_cpu_util"`
+	PreSelectNum                   int                  `yaml:"pre_select_num"`
+	PrioritySelectNum              int                  `yaml:"priority_select_num"`
+	LeastSelectName                string               `yaml:"least_select_name"`
+	MetricUpdateTimeout            time.Duration        `yaml:"metric_update_timeout"`
+	LocalMetricUpdateTimeout       time.Duration        `yaml:"local_metric_update_timeout"`
+	Filter                         *SchedulerFilterConf `yaml:"filter"`
+	Score                          *SchedulerScoreConf  `yaml:"score"`
+	PostScore                      *PostScoreConf       `yaml:"postscore"`
+	// Profile is the name of the active scheduler profile from Profiles.
+	// Empty string (default) means no profile expansion: existing Filter/Score
+	// config is left unchanged. This is config-level selection only; it does
+	// not add scheduling algorithms.
+	Profile string `yaml:"profile"`
+	// Profiles maps named strategy profiles to filter/score selector settings.
+	// User-defined entries expand onto existing enable_filters / enable_scorers /
+	// resource_weights. When Profile names a built-in preset (balanced_spread,
+	// template_locality_first, binpack_utilization) and that key is absent from
+	// this map, applySchedulerProfile uses the built-in overlay. User keys with
+	// the same name override the built-in. Built-in presets are not equivalent
+	// to offline simulator profile scoring weights.
+	Profiles                         map[string]SchedulerProfileConf `yaml:"profiles"`
+	DisableCircuitFilter             bool                            `yaml:"disable_circuit_filter"`
+	InBackoffMode                    bool                            `yaml:"in_backoff_mode"`
+	AffinityConf                     map[string]AffinityConf         `yaml:"affinityconf"`
+	NodeMaxMvmNumConf                map[string]NodeMaxMvmNumConf    `yaml:"node_max_mvm_num_conf"`
+	EnableRunInstanceHostIps         bool                            `yaml:"enable_run_instance_host_ips"`
+	MaxMvmCPU                        string                          `yaml:"max_mvm_cpu"`
 	maxCpu                           resource.Quantity
 	MaxMvmMemory                     string `yaml:"max_mvm_memory"`
 	maxMem                           resource.Quantity
@@ -256,6 +269,46 @@ type SchedulerConf struct {
 	// the values are ignored at runtime.
 	DeprecatedOvercommitRatio       *deprecatedOvercommitRatioConf           `yaml:"overcommit_ratio"`
 	DeprecatedOvercommitRatioByType map[string]deprecatedOvercommitRatioConf `yaml:"overcommit_ratio_conf"`
+}
+
+// SchedulerProfileConf is a named, optional overlay for existing scheduler
+// filter/score selector configuration. Only fields present in the profile are
+// copied onto SchedulerConf; omitted sections are left untouched.
+type SchedulerProfileConf struct {
+	Filter *SchedulerFilterConf       `yaml:"filter"`
+	Score  *SchedulerProfileScoreConf `yaml:"score"`
+}
+
+// SchedulerProfileScoreConf holds the score fields a profile may override.
+// It intentionally omits plugin_conf so profiles only select/combine existing
+// scorers and weights.
+type SchedulerProfileScoreConf struct {
+	EnableScorers   []string           `yaml:"enable_scorers"`
+	ResourceWeights map[string]float64 `yaml:"resource_weights"`
+}
+
+// allowedSchedulerFilterNames must stay in sync with the keys of
+// CubeMaster/pkg/selector/filter filters registry (filter/init.go).
+// Do not invent names; keep this set aligned when the registry changes.
+var allowedSchedulerFilterNames = map[string]struct{}{
+	"cpu":                 {},
+	"mem":                 {},
+	"template_locality":   {},
+	"realtime_create_num": {},
+	"disk":                {},
+	"thirtparty":          {},
+}
+
+// allowedSchedulerScoreNames must stay in sync with the keys of
+// CubeMaster/pkg/selector/score scores registry (score/init.go).
+// Do not invent names; keep this set aligned when the registry changes.
+var allowedSchedulerScoreNames = map[string]struct{}{
+	"real_time_weighted_average":    {},
+	"multi_factor_weighted_average": {},
+	"affinity_score":                {},
+	"image_score":                   {},
+	"external_http_score":           {},
+	"binpack_score":                 {},
 }
 
 var defaultNodeAffinitySelectorAllowedKeys = []string{
@@ -488,6 +541,8 @@ type ScorePluginConf struct {
 	AffinityScore              *AffinityScore              `yaml:"affinity_score"`
 	ImageScore                 *ImageScore                 `yaml:"image_score"`
 	TemplateScore              *TemplateScore              `yaml:"template_score"`
+	ExternalHTTPScore          *ExternalHTTPScore          `yaml:"external_http_score"`
+	BinpackScore               *BinpackScore               `yaml:"binpack_score"`
 }
 
 type MultiFactorWeightedAverage struct {
@@ -519,6 +574,25 @@ type TemplateScore struct {
 	Weight              float64  `yaml:"weight"`
 	EnableWeightFactors []string `yaml:"enable_weight_factors"`
 	Disable             bool     `yaml:"disable"`
+}
+
+type ExternalHTTPScore struct {
+	Weight   float64       `yaml:"weight"`
+	Endpoint string        `yaml:"endpoint"`
+	Timeout  time.Duration `yaml:"timeout"`
+	Mode     string        `yaml:"mode"`
+	Disable  bool          `yaml:"disable"`
+}
+
+// BinpackScore is a thin Score-phase plugin that prefers fuller nodes.
+// Missing plugin_conf uses safe defaults (enabled, equal CPU/mem/MVM weights)
+// instead of panicking.
+type BinpackScore struct {
+	Weight    float64 `yaml:"weight"`
+	CPUWeight float64 `yaml:"cpu_weight"`
+	MemWeight float64 `yaml:"mem_weight"`
+	MvmWeight float64 `yaml:"mvm_weight"`
+	Disable   bool    `yaml:"disable"`
 }
 
 type CubeletConf struct {
@@ -746,8 +820,8 @@ func preHandle(config *Config) (*Config, error) {
 		return nil, errors.New("preHandleCubeletConf fail")
 	}
 
-	if preHandleScheduler(config) != nil {
-		return nil, errors.New("preHandleScheduler failed")
+	if err := preHandleScheduler(config); err != nil {
+		return nil, fmt.Errorf("preHandleScheduler failed: %w", err)
 	}
 	if preHandleAuthConf(config) != nil {
 		return nil, errors.New("preHandleAuthConf failed")
@@ -962,6 +1036,10 @@ func preHandleScheduler(config *Config) error {
 		config.Scheduler = &WrapperSchedulerConf{}
 	}
 
+	if err := applySchedulerProfile(&config.Scheduler.SchedulerConf); err != nil {
+		return err
+	}
+
 	preHandOverhead(config)
 
 	// Account for Redis allocation records during scheduling by default.
@@ -1074,6 +1152,139 @@ func checkInstanceTypeLabelValid(config *Config) error {
 	for label, cnt := range labelRefCnt {
 		if cnt > 1 {
 			return fmt.Errorf("label %s is used by multiple product types", label)
+		}
+	}
+	return nil
+}
+
+const (
+	// Runtime built-in Profile names. Same strings as the offline simulator
+	// strategy profiles, but they overlay existing selectors and are not
+	// equivalent to simulator weightsForProfile.
+	RuntimeProfileBalancedSpread        = "balanced_spread"
+	RuntimeProfileTemplateLocalityFirst = "template_locality_first"
+	RuntimeProfileBinpackUtilization    = "binpack_utilization"
+)
+
+// applySchedulerProfile expands scheduler.profile onto Filter/Score when set.
+// Empty profile leaves existing scheduler config unchanged (default production
+// behavior). Unknown profile names and unknown selector names fail closed.
+// Built-in presets apply when the name is absent from Profiles.
+func applySchedulerProfile(s *SchedulerConf) error {
+	if s == nil || s.Profile == "" {
+		return nil
+	}
+	profile, err := resolveSchedulerProfile(s)
+	if err != nil {
+		return err
+	}
+	if err := validateSchedulerProfileSelectors(s.Profile, &profile); err != nil {
+		return err
+	}
+
+	if profile.Filter != nil && profile.Filter.EnableFilters != nil {
+		if s.Filter == nil {
+			s.Filter = &SchedulerFilterConf{}
+		}
+		s.Filter.EnableFilters = append([]string(nil), profile.Filter.EnableFilters...)
+	}
+
+	if profile.Score != nil {
+		if profile.Score.EnableScorers != nil {
+			if s.Score == nil {
+				s.Score = &SchedulerScoreConf{}
+			}
+			s.Score.EnableScorers = append([]string(nil), profile.Score.EnableScorers...)
+		}
+		if profile.Score.ResourceWeights != nil {
+			if s.Score == nil {
+				s.Score = &SchedulerScoreConf{}
+			}
+			weights := make(map[string]float64, len(profile.Score.ResourceWeights))
+			for k, v := range profile.Score.ResourceWeights {
+				weights[k] = v
+			}
+			s.Score.ResourceWeights = weights
+		}
+	}
+	return nil
+}
+
+func resolveSchedulerProfile(s *SchedulerConf) (SchedulerProfileConf, error) {
+	if s.Profiles != nil {
+		if profile, ok := s.Profiles[s.Profile]; ok {
+			return profile, nil
+		}
+	}
+	if profile, ok := builtinSchedulerProfiles()[s.Profile]; ok {
+		return profile, nil
+	}
+	if s.Profiles == nil {
+		return SchedulerProfileConf{}, fmt.Errorf("scheduler profile %q not found: profiles map is empty", s.Profile)
+	}
+	return SchedulerProfileConf{}, fmt.Errorf("scheduler profile %q not found", s.Profile)
+}
+
+func builtinSchedulerProfiles() map[string]SchedulerProfileConf {
+	return map[string]SchedulerProfileConf{
+		RuntimeProfileBalancedSpread: {
+			Filter: &SchedulerFilterConf{
+				EnableFilters: []string{"cpu", "mem", "realtime_create_num"},
+			},
+			Score: &SchedulerProfileScoreConf{
+				EnableScorers: []string{"real_time_weighted_average"},
+				ResourceWeights: map[string]float64{
+					"realtime_create_num": 2,
+					"mvm_num":             2,
+					"cpu_util":            1,
+					"quota_cpu_usage":     1,
+					"quota_mem_usage":     1,
+				},
+			},
+		},
+		RuntimeProfileTemplateLocalityFirst: {
+			Filter: &SchedulerFilterConf{
+				EnableFilters: []string{"cpu", "mem", "template_locality"},
+			},
+			Score: &SchedulerProfileScoreConf{
+				EnableScorers: []string{"image_score"},
+				ResourceWeights: map[string]float64{
+					"image_id":    1,
+					"template_id": 2,
+					"image_score": 2,
+				},
+			},
+		},
+		RuntimeProfileBinpackUtilization: {
+			Filter: &SchedulerFilterConf{
+				EnableFilters: []string{"cpu", "mem"},
+			},
+			Score: &SchedulerProfileScoreConf{
+				EnableScorers: []string{"binpack_score"},
+				ResourceWeights: map[string]float64{
+					"binpack_score": 1,
+				},
+			},
+		},
+	}
+}
+
+func validateSchedulerProfileSelectors(name string, profile *SchedulerProfileConf) error {
+	if profile == nil {
+		return nil
+	}
+	if profile.Filter != nil {
+		for _, filterName := range profile.Filter.EnableFilters {
+			if _, ok := allowedSchedulerFilterNames[filterName]; !ok {
+				return fmt.Errorf("scheduler profile %q: unknown filter %q", name, filterName)
+			}
+		}
+	}
+	if profile.Score != nil {
+		for _, scoreName := range profile.Score.EnableScorers {
+			if _, ok := allowedSchedulerScoreNames[scoreName]; !ok {
+				return fmt.Errorf("scheduler profile %q: unknown score %q", name, scoreName)
+			}
 		}
 	}
 	return nil

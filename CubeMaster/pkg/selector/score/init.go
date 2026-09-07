@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/config"
+	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/log"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/node"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/recov"
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/scheduler/selctx"
@@ -36,6 +37,7 @@ func NewSelector(ctx context.Context) []Selector {
 		fn := reflect.ValueOf(scores[name])
 
 		if !fn.IsValid() {
+			log.G(ctx).Warnf("unknown scheduler score selector: %s", name)
 			continue
 		}
 		ss = append(ss, fn.Call(nil)[0].Interface().(Selector))
@@ -54,4 +56,6 @@ var scores = map[string]interface{}{
 	"multi_factor_weighted_average": NewMultiFactorWeightedAverageScore,
 	"affinity_score":                NewAffinityScore,
 	"image_score":                   NewImageScore,
+	"external_http_score":           NewExternalHTTPScore,
+	"binpack_score":                 NewBinpackScore,
 }
