@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/config"
@@ -47,6 +48,7 @@ func TestBinpackBuiltinProfilePreservesExplicitConfig(t *testing.T) {
 		pluginYAML  string
 		wantWeight  float64
 		wantDisable bool
+		wantInitErr string
 	}{
 		{
 			name:       "custom weight",
@@ -54,27 +56,45 @@ func TestBinpackBuiltinProfilePreservesExplicitConfig(t *testing.T) {
 			wantWeight: 3,
 		},
 		{
-			name:        "zero weight",
+			name:        "zero weight conflicts with builtin profile",
 			pluginYAML:  "        weight: 0\n",
-			wantDisable: true,
+			wantInitErr: "explicitly disabled",
 		},
 		{
-			name:        "explicit disable",
+			name:        "explicit disable conflicts with builtin profile",
 			pluginYAML:  "        weight: 3\n        disable: true\n",
-			wantDisable: true,
+			wantInitErr: "explicitly disabled",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			initBinpackScoreTestConfig(t, `common: {}
+			path := filepath.Join(t.TempDir(), "cubemaster.yaml")
+			content := `common: {}
 log: {}
 scheduler:
   profile: binpack_utilization
   score:
     plugin_conf:
       binpack_score:
-`+tt.pluginYAML)
+` + tt.pluginYAML
+			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			t.Setenv("CUBE_MASTER_CONFIG_PATH", path)
+			_, err := config.Init()
+			if tt.wantInitErr != "" {
+				if err == nil {
+					t.Fatal("config.Init() error = nil, want conflict fail-fast")
+				}
+				if !strings.Contains(err.Error(), tt.wantInitErr) {
+					t.Fatalf("config.Init() error = %v, want substring %q", err, tt.wantInitErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("config.Init(): %v", err)
+			}
 
 			cfg := config.GetConfig().Scheduler.Score.ScorePluginConf.BinpackScore
 			if cfg == nil {

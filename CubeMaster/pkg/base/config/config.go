@@ -1263,6 +1263,7 @@ func validateSchedulerScorePluginConfig(s *SchedulerConf) error {
 	if s == nil || s.Score == nil {
 		return nil
 	}
+	builtin := isBuiltinSchedulerProfile(s.Profile)
 	for _, name := range s.Score.EnableScorers {
 		missing := false
 		switch name {
@@ -1283,8 +1284,95 @@ func validateSchedulerScorePluginConfig(s *SchedulerConf) error {
 			return fmt.Errorf("scheduler.score.enable_scorers enables %q but scheduler.score.plugin_conf.%s is missing",
 				name, name)
 		}
+		disabled := scorerPluginExplicitlyDisabled(s, name)
+		if builtin && disabled {
+			return fmt.Errorf("scheduler profile %q enables %q but plugin_conf.%s is explicitly disabled (disable=true or weight=0)",
+				s.Profile, name, name)
+		}
+		if disabled {
+			continue
+		}
+		factors := scorerEnableWeightFactors(s, name)
+		if factors == nil {
+			continue
+		}
+		if !hasPositiveResourceWeight(s.Score.ResourceWeights, factors) {
+			return fmt.Errorf("scheduler.score.enable_scorers enables %q but no positive resource weight is set for its enabled factors",
+				name)
+		}
 	}
 	return nil
+}
+
+func isBuiltinSchedulerProfile(name string) bool {
+	if name == "" {
+		return false
+	}
+	_, ok := builtinSchedulerProfiles()[name]
+	return ok
+}
+
+func scorerPluginExplicitlyDisabled(s *SchedulerConf, name string) bool {
+	if s == nil || s.Score == nil {
+		return false
+	}
+	switch name {
+	case "real_time_weighted_average":
+		c := s.Score.ScorePluginConf.RealTimeWeightedAverage
+		return c != nil && (c.Disable || c.Weight == 0)
+	case "multi_factor_weighted_average":
+		c := s.Score.ScorePluginConf.MultiFactorWeightedAverage
+		return c != nil && (c.Disable || c.Weight == 0)
+	case "affinity_score":
+		c := s.Score.ScorePluginConf.AffinityScore
+		return c != nil && (c.Disable || c.Weight == 0)
+	case "image_score":
+		c := s.Score.ScorePluginConf.ImageScore
+		return c != nil && (c.Disable || c.Weight == 0)
+	case "external_http_score":
+		c := s.Score.ScorePluginConf.ExternalHTTPScore
+		return c != nil && (c.Disable || c.Weight == 0)
+	case "binpack_score":
+		c := s.Score.ScorePluginConf.BinpackScore
+		return c != nil && (c.Disable || c.Weight == 0)
+	default:
+		return false
+	}
+}
+
+// scorerEnableWeightFactors returns the enabled factor list for factor-based
+// scorers. A nil return means the scorer is not factor-gated.
+func scorerEnableWeightFactors(s *SchedulerConf, name string) []string {
+	if s == nil || s.Score == nil {
+		return nil
+	}
+	switch name {
+	case "real_time_weighted_average":
+		if c := s.Score.ScorePluginConf.RealTimeWeightedAverage; c != nil {
+			return c.EnableWeightFactors
+		}
+	case "multi_factor_weighted_average":
+		if c := s.Score.ScorePluginConf.MultiFactorWeightedAverage; c != nil {
+			return c.EnableWeightFactors
+		}
+	case "image_score":
+		if c := s.Score.ScorePluginConf.ImageScore; c != nil {
+			return c.EnableWeightFactors
+		}
+	}
+	return nil
+}
+
+func hasPositiveResourceWeight(weights map[string]float64, factors []string) bool {
+	if len(weights) == 0 || len(factors) == 0 {
+		return false
+	}
+	for _, factor := range factors {
+		if weights[factor] > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveSchedulerProfile(s *SchedulerConf) (SchedulerProfileConf, bool, error) {

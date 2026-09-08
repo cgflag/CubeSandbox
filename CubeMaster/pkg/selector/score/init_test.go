@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tencentcloud/CubeSandbox/CubeMaster/pkg/base/config"
@@ -114,27 +115,16 @@ func TestSelectorConstructionSeparatesFactorAndPluginScorers(t *testing.T) {
 			name = "empty"
 		}
 		t.Run(name, func(t *testing.T) {
+			// Plugin-only scorers still construct without ResourceWeights (DEC-011).
 			initSelectorTestConfig(t, `common: {}
 log: {}
 scheduler:
   score:
     enable_scorers:
-      - real_time_weighted_average
-      - multi_factor_weighted_average
-      - image_score
       - affinity_score
       - external_http_score
       - binpack_score
 `+resourceWeights+`    plugin_conf:
-      real_time_weighted_average:
-        weight: 1
-        enable_weight_factors: [mvm_num]
-      multi_factor_weighted_average:
-        weight: 1
-        enable_weight_factors: [mvm_num]
-      image_score:
-        weight: 1
-        enable_weight_factors: [image_id]
       affinity_score:
         weight: 1
       external_http_score:
@@ -165,7 +155,8 @@ func TestFactorScorerRequiresWeightForEnabledFactor(t *testing.T) {
 	if runIsolatedScoreConfigTest(t) {
 		return
 	}
-	initSelectorTestConfig(t, `common: {}
+	path := filepath.Join(t.TempDir(), "cubemaster.yaml")
+	content := `common: {}
 log: {}
 scheduler:
   score:
@@ -177,10 +168,17 @@ scheduler:
       image_score:
         weight: 1
         enable_weight_factors: [image_id]
-`)
-
-	if selectors := NewSelector(context.Background()); len(selectors) != 0 {
-		t.Fatalf("len(selectors) = %d, want 0 for unrelated factor weight", len(selectors))
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("CUBE_MASTER_CONFIG_PATH", path)
+	_, err := config.Init()
+	if err == nil {
+		t.Fatal("config.Init() error = nil, want fail-fast for missing positive factor weight")
+	}
+	if !strings.Contains(err.Error(), "no positive resource weight") {
+		t.Fatalf("config.Init() error = %v, want substring %q", err, "no positive resource weight")
 	}
 }
 

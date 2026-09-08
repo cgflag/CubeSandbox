@@ -823,3 +823,180 @@ scheduler:
 	assert.Equal(t, []string{"affinity_score"}, got.Scheduler.Score.EnableScorers)
 	assert.Equal(t, map[string]float64{"cpu": 1}, got.Scheduler.Score.ResourceWeights)
 }
+
+func TestInit_BuiltinProfileConflictsWithExplicitDisableFailsFast(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantSub string
+	}{
+		{
+			name: "balanced_spread_weight0",
+			yaml: `common: {}
+log: {}
+scheduler:
+  profile: balanced_spread
+  score:
+    plugin_conf:
+      real_time_weighted_average:
+        weight: 0
+        enable_weight_factors: [realtime_create_num]
+`,
+			wantSub: "explicitly disabled",
+		},
+		{
+			name: "balanced_spread_disable_true",
+			yaml: `common: {}
+log: {}
+scheduler:
+  profile: balanced_spread
+  score:
+    plugin_conf:
+      real_time_weighted_average:
+        weight: 1
+        disable: true
+        enable_weight_factors: [realtime_create_num]
+`,
+			wantSub: "explicitly disabled",
+		},
+		{
+			name: "template_locality_first_weight0",
+			yaml: `common: {}
+log: {}
+scheduler:
+  profile: template_locality_first
+  score:
+    plugin_conf:
+      image_score:
+        weight: 0
+        enable_weight_factors: [image_id, template_id]
+`,
+			wantSub: "explicitly disabled",
+		},
+		{
+			name: "binpack_utilization_disable_true",
+			yaml: `common: {}
+log: {}
+scheduler:
+  profile: binpack_utilization
+  score:
+    plugin_conf:
+      binpack_score:
+        weight: 1
+        disable: true
+`,
+			wantSub: "explicitly disabled",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := initConfigFromYAML(t, tc.yaml)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantSub)
+		})
+	}
+}
+
+func TestInit_DirectEnableWeightZeroStillAllowed(t *testing.T) {
+	// C40: weight:0 disables without requiring a profile conflict fail-fast.
+	yamlBody := `common: {}
+log: {}
+scheduler:
+  score:
+    enable_scorers:
+      - binpack_score
+    plugin_conf:
+      binpack_score:
+        weight: 0
+`
+	got, err := initConfigFromYAML(t, yamlBody)
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"binpack_score"}, got.Scheduler.Score.EnableScorers)
+	assert.Equal(t, 0.0, got.Scheduler.Score.ScorePluginConf.BinpackScore.Weight)
+}
+
+func TestInit_FactorScorerWithoutPositiveFactorWeightFailsFast(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantSub string
+	}{
+		{
+			name: "realtime_all_factor_weights_zero",
+			yaml: `common: {}
+log: {}
+scheduler:
+  score:
+    enable_scorers:
+      - real_time_weighted_average
+    resource_weights:
+      realtime_create_num: 0
+      mvm_num: 0
+    plugin_conf:
+      real_time_weighted_average:
+        weight: 1
+        enable_weight_factors: [realtime_create_num, mvm_num]
+`,
+			wantSub: "no positive resource weight",
+		},
+		{
+			name: "realtime_missing_resource_weights",
+			yaml: `common: {}
+log: {}
+scheduler:
+  score:
+    enable_scorers:
+      - real_time_weighted_average
+    plugin_conf:
+      real_time_weighted_average:
+        weight: 1
+        enable_weight_factors: [realtime_create_num]
+`,
+			wantSub: "no positive resource weight",
+		},
+		{
+			name: "image_score_all_factor_weights_zero",
+			yaml: `common: {}
+log: {}
+scheduler:
+  score:
+    enable_scorers:
+      - image_score
+    resource_weights:
+      image_id: 0
+      template_id: 0
+    plugin_conf:
+      image_score:
+        weight: 1
+        enable_weight_factors: [image_id, template_id]
+`,
+			wantSub: "no positive resource weight",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := initConfigFromYAML(t, tc.yaml)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantSub)
+		})
+	}
+}
+
+func TestInit_DisabledFactorScorerSkipsFactorWeightGate(t *testing.T) {
+	yamlBody := `common: {}
+log: {}
+scheduler:
+  score:
+    enable_scorers:
+      - real_time_weighted_average
+    resource_weights:
+      realtime_create_num: 0
+    plugin_conf:
+      real_time_weighted_average:
+        weight: 0
+        enable_weight_factors: [realtime_create_num]
+`
+	got, err := initConfigFromYAML(t, yamlBody)
+	assert.NoError(t, err)
+	assert.Equal(t, 0.0, got.Scheduler.Score.ScorePluginConf.RealTimeWeightedAverage.Weight)
+}
