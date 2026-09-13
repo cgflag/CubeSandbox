@@ -218,6 +218,84 @@ scheduler:
 	}
 }
 
+func TestBinpackScoreSelectCPUHeavyVsMemoryHeavy(t *testing.T) {
+	if runIsolatedScoreConfigTest(t) {
+		return
+	}
+	// Extreme positive factor weights: Select path must prefer the matching axis
+	// (documents D1 gap closed for unequal plugin_conf without zeroing a dimension).
+	initBinpackScoreTestConfig(t, `common: {}
+log: {}
+scheduler:
+  ignore_redis_allocation: false
+  overcommit_ratio:
+    cpu_ratio: 1
+    mem_ratio: 1
+  score:
+    enable_scorers:
+      - binpack_score
+    plugin_conf:
+      binpack_score:
+        weight: 1
+        cpu_weight: 20
+        mem_weight: 1
+        mvm_weight: 1
+`)
+
+	cpuHeavy := &node.Node{
+		InsID: "node-cpu-heavy", QuotaCpu: 1000, QuotaMem: 1000,
+		QuotaCpuUsage: 900, QuotaMemUsage: 100, MvmNum: 2, MaxMvmLimit: 10,
+	}
+	memHeavy := &node.Node{
+		InsID: "node-mem-heavy", QuotaCpu: 1000, QuotaMem: 1000,
+		QuotaCpuUsage: 100, QuotaMemUsage: 900, MvmNum: 2, MaxMvmLimit: 10,
+	}
+	selCtx := selctx.New("random")
+	selCtx.Ctx = context.Background()
+	selCtx.SetNodes(node.NodeList{cpuHeavy, memHeavy})
+
+	got, err := NewBinpackScore().Select(selCtx)
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	byID := map[string]float64{}
+	for i := range got {
+		byID[got[i].ID()] = got[i].Score
+	}
+	if byID["node-cpu-heavy"] <= byID["node-mem-heavy"] {
+		t.Fatalf("cpu-weighted scores = %+v, want node-cpu-heavy > node-mem-heavy", byID)
+	}
+
+	initBinpackScoreTestConfig(t, `common: {}
+log: {}
+scheduler:
+  ignore_redis_allocation: false
+  overcommit_ratio:
+    cpu_ratio: 1
+    mem_ratio: 1
+  score:
+    enable_scorers:
+      - binpack_score
+    plugin_conf:
+      binpack_score:
+        weight: 1
+        cpu_weight: 1
+        mem_weight: 20
+        mvm_weight: 1
+`)
+	got, err = NewBinpackScore().Select(selCtx)
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	byID = map[string]float64{}
+	for i := range got {
+		byID[got[i].ID()] = got[i].Score
+	}
+	if byID["node-mem-heavy"] <= byID["node-cpu-heavy"] {
+		t.Fatalf("mem-weighted scores = %+v, want node-mem-heavy > node-cpu-heavy", byID)
+	}
+}
+
 func TestBinpackScoreNegativeWeightRejectedAtConfigLoad(t *testing.T) {
 	if runIsolatedScoreConfigTest(t) {
 		return
